@@ -45,6 +45,10 @@ import {
 } from "./translationChain";
 import { detectAgentName } from "../config/agentDetection";
 import {
+  detectTranslationRequest,
+  stripTranslationInstruction,
+} from "./translationTrigger";
+import {
   resolveDictationRouteKind,
   resolveDictationTranslationReachability,
 } from "./dictationRouting";
@@ -103,15 +107,18 @@ function resolveReasoningRoute(
     isSelfHostedTranslation,
   });
 
+  const translationRequest = detectTranslationRequest(text);
+  const effectiveTranslationRequested = translationRequested || translationRequest.requested;
+
   const kind = resolveDictationRouteKind({
     cleanupReachable,
     agentReachable: agent.reachable,
     agentInvoked: !!agentName && detectAgentName(text, agentName),
     voiceAgentRequested,
-    translationRequested,
+    translationRequested: effectiveTranslationRequested,
     translationReachable,
   });
-  if (translationRequested && kind !== "translation") {
+  if (effectiveTranslationRequested && kind !== "translation") {
     logger.warn(
       "Translation requested but unreachable, falling back",
       {
@@ -123,6 +130,8 @@ function resolveReasoningRoute(
     );
   }
   if (kind === "translation") {
+    const targetLang =
+      translationRequest.targetLanguage || settings.translationTargetLanguage || "en";
     const provider = isCloudTranslation
       ? "openwhispr"
       : settings.translationProvider?.trim() || undefined;
@@ -134,7 +143,7 @@ function resolveReasoningRoute(
       cleanupConfig: { disableThinking: settings.cleanupDisableThinking },
       config: {
         provider,
-        language: settings.translationTargetLanguage,
+        language: targetLang,
         lanUrl: isSelfHostedTranslation ? settings.translationRemoteUrl : undefined,
         baseUrl: isCustomTranslation ? settings.translationCloudBaseUrl || undefined : undefined,
         customApiKey:
@@ -144,7 +153,7 @@ function resolveReasoningRoute(
         disableThinking: settings.translationDisableThinking,
         systemPrompt: resolvePrompt("translate", {
           agentName,
-          targetLanguageLabel: getLanguageLabel(settings.translationTargetLanguage),
+          targetLanguageLabel: getLanguageLabel(targetLang),
           customDictionary: getDictionaryHintWords(settings),
           uiLanguage: settings.uiLanguage,
         }),
@@ -1746,6 +1755,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   // Cleanup-then-translate chain shared by batch, cloud, and streaming paths: Step 1
   // (optional cleanup) soft-fails to input; Step 2 translates unless source === target.
   async runTranslationChain({ text, settings, agentName, route, cleanup }) {
+    // Strip a leading natural-language "请翻译[成X]" instruction so it isn't
+    // treated as content to translate (no-op on the dedicated hotkey path).
+    text = stripTranslationInstruction(text);
     const runCleanup = async (currentText) => {
       if (cleanup.mode === "cloudReason") {
         const reasonResult = await withSessionRefresh(async () => {

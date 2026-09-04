@@ -148,6 +148,22 @@ class DatabaseManager {
         )
       `);
 
+      // Raw AI-output → user-final edit pairs captured by Auto-Learn. Kept as
+      // low-confidence candidates (status 'pending') for future style mining;
+      // nothing here becomes a rule on its own. transcription_id is nullable
+      // until clientTranscriptionId is threaded through the paste path.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS correction_pairs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          transcription_id INTEGER,
+          ai_text TEXT NOT NULL,
+          user_final_text TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'auto',
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS snippets (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -993,6 +1009,27 @@ class DatabaseManager {
       return { id: result.lastInsertRowid, success: true, transcription };
     } catch (error) {
       debugLogger.error("Error saving transcription", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  saveCorrectionPair({
+    aiText,
+    userFinalText,
+    source = "auto",
+    transcriptionId = null,
+  } = {}) {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      const stmt = this.db.prepare(
+        "INSERT INTO correction_pairs (transcription_id, ai_text, user_final_text, source) VALUES (?, ?, ?, ?)"
+      );
+      const result = stmt.run(transcriptionId, aiText, userFinalText, source);
+      return { id: result.lastInsertRowid, success: true };
+    } catch (error) {
+      debugLogger.error("Error saving correction pair", { error: error.message }, "database");
       throw error;
     }
   }

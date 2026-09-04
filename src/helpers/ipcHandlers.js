@@ -899,6 +899,22 @@ class IPCHandlers {
     this._autoLearnLatestData = null;
 
     try {
+      // Persist the raw AI-output → user-final diff pair for long-term style
+      // learning, independent of the word-level dictionary corrections below.
+      if (newFieldValue !== originalText) {
+        try {
+          this.databaseManager.saveCorrectionPair({
+            aiText: originalText,
+            userFinalText: newFieldValue,
+            source: "auto",
+          });
+        } catch (pairErr) {
+          debugLogger.debug("[AutoLearn] Failed to save correction pair", {
+            error: pairErr.message,
+          });
+        }
+      }
+
       const { extractCorrections } = require("../utils/correctionLearner");
       const currentDict = this._getDictionarySafe();
       const corrections = extractCorrections(originalText, newFieldValue, currentDict);
